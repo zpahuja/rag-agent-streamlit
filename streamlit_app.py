@@ -207,7 +207,15 @@ def google_search(query):
 
     async def scrape_and_save(url):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            try:
+                browser = await p.chromium.launch(headless=True)
+            except Exception as e:
+                if "Executable doesn't exist" in str(e):
+                    os.system("playwright install")
+                    browser = await p.chromium.launch(headless=True)
+            else:
+                st.error(f"Timeout or error while trying to load {url}: {str(e)}")
+                return []
             page = await browser.new_page()
             try:
                 await page.goto(
