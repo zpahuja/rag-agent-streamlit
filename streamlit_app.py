@@ -11,7 +11,7 @@ import traceback
 import trafilatura
 
 from concurrent.futures import ThreadPoolExecutor
-from llama_index.core import VectorStoreIndex
+from llama_index.core import VectorStoreIndex, Document
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.readers.file import UnstructuredReader
 from llama_index.core.node_parser import (
@@ -210,18 +210,17 @@ def google_search(query):
             if downloaded:
                 text = trafilatura.extract(downloaded)
                 if text:
-                    return [{"text": text}]
+                    return Document(text=text)
         except Exception as e:
             st.error(f"Error scraping {url}: {str(e)}")
-        return []
+        return None
 
     async def gather_docs(urls):
         tasks = [scrape_url(url) for url in urls]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        return [doc for doc in results if doc is not None]
 
-    fetched_docs = asyncio.run(gather_docs(urls))
-    for docs in fetched_docs:
-        all_docs.extend(docs)
+    all_docs = asyncio.run(gather_docs(urls))
 
     tok = time.time()
     # st.write(f"Time taken to read and load all pages: {tok - tik}")
