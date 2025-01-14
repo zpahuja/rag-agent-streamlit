@@ -8,6 +8,7 @@ import streamlit as st
 import tempfile
 import time
 import traceback
+import trafilatura
 
 from concurrent.futures import ThreadPoolExecutor
 from llama_index.core import VectorStoreIndex
@@ -24,13 +25,11 @@ from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.core.node_parser import get_leaf_nodes, get_root_nodes
 from openai import OpenAI
 from pathlib import Path
-from playwright.async_api import async_playwright
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 # CONSTANTS
 OPENAI_MODEL = "gpt-4o"
 QUERY_EXPANSION_FACTOR = 3
-PLAYWRIGHT_TIMEOUT = 15000
 
 # API KEYS
 BING_API_KEY = st.secrets["BING_API_KEY"]
@@ -199,49 +198,30 @@ def google_search(query):
     tok = time.time()
     st.write(f"Time to retrieve all SERP results: {tok - tik}")
 
-    # scrapes search results in parallel
+    # scrape search results using trafilatura
     urls = [result["link"] for result in unique_search_results]
     all_docs = []
 
     tik = time.time()
 
-    async def scrape_and_save(url):
-        async with async_playwright() as p:
-            try:
-                browser = await p.chromium.launch(headless=True)
-            except Exception as e:
-                if "Executable doesn't exist" in str(e):
-                    os.system("playwright install")
-                    browser = await p.chromium.launch(headless=True)
-            else:
-                st.error(f"Timeout or error while trying to load {url}: {str(e)}")
-                return []
-            page = await browser.new_page()
-            try:
-                await page.goto(
-                    url, timeout=PLAYWRIGHT_TIMEOUT, wait_until="networkidle"
-                )  # 5 seconds timeout
-                page_source = await page.content()
-                tmpdir = Path(tmpdirname)
-                filepath = tmpdir / f"{url.replace('/', '_')}.html"
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(page_source)
-                loader = UnstructuredReader()
-                docs = loader.load_data(file=filepath, split_documents=False)
-                return docs
-            except Exception as e:
-                st.error(f"Timeout or error while trying to load {url}: {str(e)}")
-                return []
-            finally:
-                await browser.close()
+    async def scrape_url(url):
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            if downloaded:
+                text = trafilatura.extract(downloaded)
+                if text:
+                    return [{"text": text}]
+        except Exception as e:
+            st.error(f"Error scraping {url}: {str(e)}")
+        return []
 
     async def gather_docs(urls):
-        return await asyncio.gather(*[scrape_and_save(url) for url in urls])
+        tasks = [scrape_url(url) for url in urls]
+        return await asyncio.gather(*tasks)
 
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        fetched_docs = asyncio.run(gather_docs(urls))
-        for docs in fetched_docs:
-            all_docs.extend(docs)
+    fetched_docs = asyncio.run(gather_docs(urls))
+    for docs in fetched_docs:
+        all_docs.extend(docs)
 
     tok = time.time()
     # st.write(f"Time taken to read and load all pages: {tok - tik}")
